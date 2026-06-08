@@ -1,0 +1,213 @@
+@page "/movimientos"
+@attribute [Authorize]
+@inject BankApiService ApiService
+@inject AuthenticationStateProvider AuthStateProvider
+@inject NavigationManager NavigationManager
+@inject ISnackbar Snackbar
+@inject IJSRuntime JS
+
+<PageTitle>Historial de Movimientos - BancoApp</PageTitle>
+
+<MudLayout Style="min-height: 100vh; background: #0d1117;">
+    <!-- AppBar Premium con botón de Volver -->
+    <MudAppBar Elevation="2" Style="background: #161b22; border-bottom: 1px solid #21262d;">
+        <MudButton Variant="Variant.Text" 
+                   Color="Color.Inherit" 
+                   StartIcon="@Icons.Material.Filled.ArrowBack" 
+                   OnClick="NavigateToDashboard"
+                   Style="text-transform: none; color: #8b949e;">
+            Volver
+        </MudButton>
+        <MudText Typo="Typo.h6" Class="font-weight-bold ml-4" Style="color: #f0f6fc;">
+            Movimientos
+        </MudText>
+    </MudAppBar>
+
+    <MudMainContent Class="pt-16">
+        <MudContainer MaxWidth="MaxWidth.Medium" Class="mt-8 px-4">
+            <!-- Header con título y botón de Descarga -->
+            <div class="d-flex justify-space-between align-center mb-6 flex-wrap gap-4">
+                <div>
+                    <MudText Typo="Typo.h4" Class="font-weight-bold mb-1" Style="color: #f0f6fc;">
+                        Historial de Cuenta
+                    </MudText>
+                    <MudText Typo="Typo.subtitle1" Style="color: #8b949e;">
+                        Revisa tus últimos movimientos bancarios.
+                    </MudText>
+                </div>
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Secondary"
+                           StartIcon="@Icons.Material.Filled.Download"
+                           OnClick="HandleDownloadPdfAsync"
+                           Disabled="_isLoading || !_cuentaId.HasValue || _datos?.Movimientos == null || _datos.Movimientos.Length == 0 || _isDownloadingPdf"
+                           Class="px-5 py-3 rounded-lg font-weight-bold"
+                           Style="text-transform: none; font-size: 1rem; box-shadow: 0 4px 12px rgba(168, 85, 247, 0.2);">
+                    @if (_isDownloadingPdf)
+                    {
+                        <MudProgressCircular Size="Size.Small" Color="Color.Default" Class="mr-2" />
+                        <span>Descargando...</span>
+                    }
+                    else
+                    {
+                        <span>Estado de Cuenta</span>
+                    }
+                </MudButton>
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(_errorMessage))
+            {
+                <MudAlert Severity="Severity.Error" Variant="Variant.Filled" Class="mb-6 rounded-lg" Elevation="2">
+                    @_errorMessage
+                </MudAlert>
+            }
+
+            <!-- Tabla de Movimientos -->
+            @if (_isLoading)
+            {
+                <div class="d-flex justify-center my-10">
+                    <MudProgressCircular Color="Color.Primary" Size="Size.Large" Indeterminate="true" />
+                </div>
+            }
+            else
+            {
+                <MudTable Items="_datos?.Movimientos" 
+                          Hover="true" 
+                          Elevation="4" 
+                          Class="rounded-lg overflow-hidden mb-8"
+                          Style="background: #161b22; border: 1px solid #21262d; color: #f0f6fc;"
+                          HeaderClass="table-header-dark">
+                    <HeaderContent>
+                        <MudTh Style="color: #8b949e; font-weight: bold; border-bottom: 1px solid #21262d;">Fecha</MudTh>
+                        <MudTh Style="color: #8b949e; font-weight: bold; border-bottom: 1px solid #21262d;">Tipo</MudTh>
+                        <MudTh Style="color: #8b949e; font-weight: bold; border-bottom: 1px solid #21262d; text-align: right;">Monto</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Fecha" Style="border-bottom: 1px solid #21262d; color: #f0f6fc;">
+                            @context.FechaEvento.ToLocalTime().ToString("g", System.Globalization.CultureInfo.GetCultureInfo("es-MX"))
+                        </MudTd>
+                        <MudTd DataLabel="Tipo" Style="border-bottom: 1px solid #21262d;">
+                            @if (context.TipoMovimiento.ToLower().Contains("deposito") || context.TipoMovimiento.ToLower().Contains("depósito"))
+                            {
+                                <MudChip T="string" Color="Color.Success" Variant="Variant.Filled" Size="Size.Small" Style="font-weight: 600; text-transform: uppercase;">
+                                    Depósito
+                                </MudChip>
+                            }
+                            else
+                            {
+                                <MudChip T="string" Color="Color.Error" Variant="Variant.Filled" Size="Size.Small" Style="font-weight: 600; text-transform: uppercase;">
+                                    @context.TipoMovimiento
+                                </MudChip>
+                            }
+                        </MudTd>
+                        <MudTd DataLabel="Monto" Style="border-bottom: 1px solid #21262d; color: #f0f6fc; font-weight: bold;" Align="@Align.Right">
+                            $@context.Monto.ToString("N2", System.Globalization.CultureInfo.GetCultureInfo("es-MX"))
+                        </MudTd>
+                    </RowTemplate>
+                    <NoRecordsContent>
+                        <MudText Align="Align.Center" Style="color: #8b949e; padding: 2rem 0;">
+                            No hay movimientos registrados en esta cuenta.
+                        </MudText>
+                    </NoRecordsContent>
+                </MudTable>
+            }
+        </MudContainer>
+    </MudMainContent>
+</MudLayout>
+
+@code {
+    private bool _isLoading = true;
+    private bool _isDownloadingPdf = false;
+    private string _errorMessage;
+    private Guid? _cuentaId;
+    private DTOs.CuentaDto _datos;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+
+        if (user.Identity == null || !user.Identity.IsAuthenticated)
+        {
+            NavigationManager.NavigateTo("login");
+            return;
+        }
+
+        try
+        {
+            var idCuentaStr = user.FindFirst("IdCuenta")?.Value;
+            if (Guid.TryParse(idCuentaStr, out var parsedId))
+            {
+                _cuentaId = parsedId;
+            }
+
+            if (_cuentaId.HasValue)
+            {
+                var customProvider = (CustomAuthenticationStateProvider)AuthStateProvider;
+                var token = await customProvider.GetTokenAsync();
+
+                if (!string.IsNullOrWhiteSpace(token))
+                {
+                    _datos = await ApiService.GetEstadoCuentaAsync(_cuentaId.Value, token);
+                }
+                else
+                {
+                    _errorMessage = "No se pudo obtener el token de sesión.";
+                }
+            }
+            else
+            {
+                _errorMessage = "Tu cuenta de usuario no tiene asignada una cuenta de ahorros.";
+            }
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = "No se pudieron cargar los movimientos de la cuenta.";
+            Console.WriteLine(ex);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task HandleDownloadPdfAsync()
+    {
+        if (!_cuentaId.HasValue || _isDownloadingPdf) return;
+
+        _isDownloadingPdf = true;
+
+        try
+        {
+            var customProvider = (CustomAuthenticationStateProvider)AuthStateProvider;
+            var token = await customProvider.GetTokenAsync();
+
+            if (!string.IsNullOrWhiteSpace(token))
+            {
+                var pdfBytes = await ApiService.GetEstadoCuentaPdfAsync(_cuentaId.Value, token);
+                var base64String = Convert.ToBase64String(pdfBytes);
+                var fileName = $"EstadoCuenta_{_cuentaId.Value}.pdf";
+
+                await JS.InvokeVoidAsync("downloadFileFromBase64", fileName, base64String);
+                Snackbar.Add("¡Estado de cuenta PDF descargado con éxito!", Severity.Success);
+            }
+            else
+            {
+                Snackbar.Add("Error al obtener credenciales para descargar el archivo.", Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add("No se pudo descargar el estado de cuenta.", Severity.Error);
+            Console.WriteLine(ex);
+        }
+        finally
+        {
+            _isDownloadingPdf = false;
+        }
+    }
+
+    private void NavigateToDashboard()
+    {
+        NavigationManager.NavigateTo("dashboard");
+    }
+}

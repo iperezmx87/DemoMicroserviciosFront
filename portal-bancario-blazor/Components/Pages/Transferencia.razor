@@ -1,0 +1,243 @@
+@page "/transferencia"
+@attribute [Authorize]
+@inject BankApiService ApiService
+@inject AuthenticationStateProvider AuthStateProvider
+@inject NavigationManager NavigationManager
+@inject ISnackbar Snackbar
+
+<PageTitle>Enviar Dinero - BancoApp</PageTitle>
+
+<MudLayout Style="min-height: 100vh; background: #0d1117;">
+    <!-- AppBar Premium con botón de Volver -->
+    <MudAppBar Elevation="2" Style="background: #161b22; border-bottom: 1px solid #21262d;">
+        <MudButton Variant="Variant.Text" 
+                   Color="Color.Inherit" 
+                   StartIcon="@Icons.Material.Filled.ArrowBack" 
+                   OnClick="NavigateToDashboard"
+                   Style="text-transform: none; color: #8b949e;">
+            Volver
+        </MudButton>
+        <MudText Typo="Typo.h6" Class="font-weight-bold ml-4" Style="color: #f0f6fc;">
+            Transferencia
+        </MudText>
+    </MudAppBar>
+
+    <MudMainContent Class="pt-16">
+        <MudContainer MaxWidth="MaxWidth.Small" Class="mt-8 px-4">
+            <!-- Header de página -->
+            <div class="mb-8">
+                <MudText Typo="Typo.h4" Class="font-weight-bold mb-1" Style="color: #f0f6fc;">
+                    Enviar Dinero
+                </MudText>
+                <MudText Typo="Typo.subtitle1" Style="color: #8b949e;">
+                    Transfiere fondos de manera segura a otras cuentas al instante.
+                </MudText>
+            </div>
+
+            <!-- Alertas de Éxito o Error -->
+            @if (!string.IsNullOrWhiteSpace(_successMessage))
+            {
+                <MudAlert Severity="Severity.Success" Variant="Variant.Filled" Class="mb-6 rounded-lg" Elevation="2">
+                    @_successMessage
+                </MudAlert>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(_errorMessage))
+            {
+                <MudAlert Severity="Severity.Error" Variant="Variant.Filled" Class="mb-6 rounded-lg" Elevation="2">
+                    @_errorMessage
+                </MudAlert>
+            }
+
+            <!-- Formulario Principal -->
+            <MudCard Elevation="4" Class="pa-6 rounded-lg mb-8" Style="background: #161b22; border: 1px solid #21262d;">
+                <MudCardContent>
+                    <EditForm Model="@_model" OnValidSubmit="HandleTransferAsync">
+                        <MudTextField @bind-Value="_model.CuentaDestinoId"
+                                      Label="Cuenta Destino (ID)"
+                                      Variant="Variant.Outlined"
+                                      Margin="Margin.Normal"
+                                      FullWidth="true"
+                                      Disabled="_isLoading"
+                                      HelperText="Introduce el código identificador único (GUID) de la cuenta destino."
+                                      HelperTextOnFocus="true"
+                                      Class="mb-4" />
+
+                        <MudTextField @bind-Value="_model.Monto"
+                                      Label="Monto a Transferir"
+                                      InputType="InputType.Number"
+                                      Adornment="Adornment.Start"
+                                      AdornmentIcon="@Icons.Material.Filled.AttachMoney"
+                                      Variant="Variant.Outlined"
+                                      Margin="Margin.Normal"
+                                      FullWidth="true"
+                                      Disabled="_isLoading"
+                                      Class="mb-4" />
+
+                        <MudTextField @bind-Value="_model.PropietarioDestino"
+                                      Label="Nombre del Destinatario (Opcional)"
+                                      Variant="Variant.Outlined"
+                                      Margin="Margin.Normal"
+                                      FullWidth="true"
+                                      Disabled="_isLoading"
+                                      Class="mb-6" />
+
+                        <MudButton ButtonType="ButtonType.Submit"
+                                   Variant="Variant.Filled"
+                                   Color="Color.Primary"
+                                   FullWidth="true"
+                                   Size="Size.Large"
+                                   StartIcon="@Icons.Material.Filled.Send"
+                                   Disabled="_isLoading || string.IsNullOrWhiteSpace(_model.CuentaDestinoId) || _model.Monto <= 0"
+                                   Class="py-3 rounded-lg font-weight-bold"
+                                   Style="text-transform: none; font-size: 1.1rem; box-shadow: 0 4px 12px rgba(56, 189, 248, 0.2);">
+                            @if (_isLoading)
+                            {
+                                <MudProgressCircular Size="Size.Small" Color="Color.Default" Class="mr-2" />
+                                <span>Procesando...</span>
+                            }
+                            else
+                            {
+                                <span>Confirmar Transferencia</span>
+                            }
+                        </MudButton>
+                    </EditForm>
+                </MudCardContent>
+            </MudCard>
+        </MudContainer>
+    </MudMainContent>
+</MudLayout>
+
+@code {
+    private TransferModel _model = new();
+    private bool _isLoading = false;
+    private string _successMessage;
+    private string _errorMessage;
+
+    private Guid _cuentaOrigenId;
+    private string _propietarioOrigen;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+
+        if (user.Identity == null || !user.Identity.IsAuthenticated)
+        {
+            NavigationManager.NavigateTo("login");
+            return;
+        }
+
+        try
+        {
+            var idCuentaStr = user.FindFirst("IdCuenta")?.Value;
+            _propietarioOrigen = user.FindFirst("Propietario")?.Value ?? user.Identity.Name ?? "Usuario";
+
+            if (Guid.TryParse(idCuentaStr, out var parsedId))
+            {
+                _cuentaOrigenId = parsedId;
+            }
+            else
+            {
+                _errorMessage = "Tu cuenta de origen no es válida o no está configurada correctamente en tu token.";
+            }
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = "Error al cargar la información del usuario.";
+            Console.WriteLine(ex);
+        }
+    }
+
+    private async Task HandleTransferAsync()
+    {
+        _successMessage = null;
+        _errorMessage = null;
+
+        if (string.IsNullOrWhiteSpace(_model.CuentaDestinoId))
+        {
+            _errorMessage = "Por favor, introduce el ID de la cuenta destino.";
+            return;
+        }
+
+        if (!Guid.TryParse(_model.CuentaDestinoId, out var parsedDestId))
+        {
+            _errorMessage = "Por favor, ingresa un ID de cuenta destino válido (formato GUID).";
+            return;
+        }
+
+        if (_model.Monto <= 0)
+        {
+            _errorMessage = "Por favor, ingresa un monto mayor a cero.";
+            return;
+        }
+
+        if (parsedDestId == _cuentaOrigenId)
+        {
+            _errorMessage = "No puedes realizar una transferencia a tu propia cuenta.";
+            return;
+        }
+
+        _isLoading = true;
+
+        try
+        {
+            var customProvider = (CustomAuthenticationStateProvider)AuthStateProvider;
+            var token = await customProvider.GetTokenAsync();
+
+            if (!string.IsNullOrWhiteSpace(token))
+            {
+                var request = new DTOs.TransferenciaRequestDto
+                {
+                    CuentaOrigenId = _cuentaOrigenId,
+                    CuentaDestinoId = parsedDestId,
+                    Monto = _model.Monto,
+                    PropietarioOrigen = _propietarioOrigen,
+                    PropietarioDestino = string.IsNullOrWhiteSpace(_model.PropietarioDestino) ? "Desconocido" : _model.PropietarioDestino
+                };
+
+                var result = await ApiService.TransferirAsync(request, token);
+
+                if (result.Success)
+                {
+                    _successMessage = "¡Transferencia realizada con éxito! El saldo de tu cuenta se actualizará en breve.";
+                    Snackbar.Add("¡Transferencia realizada con éxito!", Severity.Success);
+
+                    // Limpiar formulario
+                    _model = new TransferModel();
+                }
+                else
+                {
+                    _errorMessage = result.Error ?? "Error al realizar la transferencia.";
+                    Snackbar.Add(_errorMessage, Severity.Error);
+                }
+            }
+            else
+            {
+                _errorMessage = "Sesión inválida o expirada. Por favor inicia sesión nuevamente.";
+                NavigationManager.NavigateTo("login");
+            }
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = "Ocurrió un error inesperado al procesar la transferencia.";
+            Console.WriteLine(ex);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private void NavigateToDashboard()
+    {
+        NavigationManager.NavigateTo("dashboard");
+    }
+
+    public class TransferModel
+    {
+        public string CuentaDestinoId { get; set; }
+        public decimal Monto { get; set; }
+        public string PropietarioDestino { get; set; }
+    }
+}
