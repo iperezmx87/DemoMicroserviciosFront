@@ -5,8 +5,10 @@ import { ResumenComponent } from './features/dashboard/resumen/resumen';
 import { MovimientosComponent } from './features/dashboard/movimientos/movimientos';
 import { TransferirComponent } from './features/dashboard/transferir/transferir';
 import { authGuard } from './services/auth.guard';
+import { CrearCuentaComponent } from './features/auth/crear-cuenta';
 
 export const routes: Routes = [
+  { path: 'crear-cuenta', component: CrearCuentaComponent },
   { path: 'login', component: LoginComponent },
   { 
     path: 'dashboard', 
